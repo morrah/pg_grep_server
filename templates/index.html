@@ -1,0 +1,238 @@
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="icon" href="/static/favicon.ico" type="image/x-icon" />
+        <!-- <link href="https://fonts.googleapis.com/css?family=PT+Serif" rel="stylesheet"> -->
+        <link href="{{ app.router.static.url(filename='css/main.css') }}" rel="stylesheet" />  
+        <TITLE>postgres log</TITLE>
+    </head>
+    <body>
+        <div class="template" id="message-template">
+            <div class='message' onmouseover='set_highlight(this)'>
+                <span class='message-text'>$(text)</span>
+            </div>
+        </div>
+        <div class="wrapper">
+            <div id='messages'></div>
+        </div>
+        <div class="footer">
+            <label class="filter_ip-wrapper" for="filter_ip">filter_IPs
+                <input id="filter_ip" 
+                       type="input" 
+                       value="{{ ip_filter }}" 
+                       placeholder="192.168.1.42 10.10.10.*" 
+                       title="Use space as a delimiter and wildcards for multiple subscription"
+                />
+            </label>
+            <input id="start_stop_btn" type="button" onclick="start_stop_btn();" value="Start" />
+            <input id="hide_meta_btn"  type="button" onclick="hide_meta_btn();"  value="Hide metainfo" />
+            <input id="clear_btn"      type="button" onclick="clear_btn();"      value="Clear" />
+            <label class="autoremove_limit-wrapper" for="autoremove_limit">autoremove limit
+                <input id="autoremove_limit" type="input" onchange="set_autoremove();" value="100"/>
+            </label>
+            <label class="scroll_is_animated-wrapper" for="scroll_is_animated">scroll_is_animated
+                <input id="scroll_is_animated" type="checkbox" onchange="set_scroll_is_animated();" />
+            </label>
+        </div>
+        <script>
+            var refresh_period = 100;
+            var ip_filter = {% if ip_filter %} '{{ ip_filter }}' {% else %} '' {% endif %};
+            var is_stopped = true;
+            var metainfo_visible = true;
+            var autoremove_limit = 100;
+            var escape = document.createElement('textarea');
+            var sock;
+            var tmpl = document.getElementById('message-template').innerHTML;
+            var autoremove_timer;
+            var message_collector = [];
+            var msg_count = 0;
+            var scroll_queue = 0;
+            var scroll_queue_limit = 5;
+            var scroll_duration = 1000;
+            var scroll_is_animated = false;
+
+            function socket_init(filter){
+                try{
+                    sock = new WebSocket('ws://' + window.location.host + '/ws');
+                }
+                catch(err){
+                    sock = new WebSocket('wss://' + window.location.host + '/ws');
+                }
+                sock.onopen = function(event) {
+                  this.send('subscribe ' + filter);
+                };
+                sock.onclose = function() {};
+                sock.onmessage = function(event) {
+                  message_collector.push(JSON.parse(event.data));
+                };
+            }
+
+            function scrollDown(duration, callback) {
+                if (duration <= 0) return;
+                var difference = document.body.scrollHeight - document.body.clientHeight - document.body.scrollTop;
+                var perTick = difference / duration * 10;
+
+                setTimeout(function() {
+                    document.body.scrollTop = document.body.scrollTop + perTick;
+                    if (document.body.scrollTop === document.body.scrollHeight - document.body.clientHeight) {
+                        console.log('Pushed it to the limit!');
+                        if (typeof callback === 'function'){
+                            callback();
+                        }
+                        scroll_queue = 0;
+                        return;
+                    }
+                    if (scroll_queue < scroll_queue_limit) {
+                        scrollDown(duration - 10, callback);
+                    }
+                }, 10);
+            }
+
+            function append_new_messages() {
+                /*
+                cначала добавляем новые сообщения, 
+                затем анимация прокрутки вниз, 
+                и только затем стираем старые;
+                
+                если в scroll_queue накопилось scroll_queue_limit скроллов (при нагрузке), 
+                то скролл устанавливается без анимации, а scroll_queue сбрасывается в ноль;
+                */
+                var data = message_collector.slice(-autoremove_limit);
+                message_collector = [];
+                var ts = new Date().getTime();
+                if (data.length === 0) {
+                    if (!is_stopped) {
+                        autoremove_timer = setTimeout(append_new_messages, refresh_period);
+                    }
+                    return;
+                }
+                var msgs = document.getElementById('messages').innerHTML;                            
+                for (var i=0; i<data.length; i++ ){
+                    var msg = tmpl
+                        .replace('$(text)', 
+                            '<span class="message-body-meta '
+                            + (metainfo_visible ? '' : 'message-body-meta-hidden') 
+                            + '">' + data[i].header.escapeHTML() + '</span>'
+                            + data[i].log_text.escapeHTML()
+                                .replace(/оператор:/g, 'оператор:<br />')
+                                .replace(/подготовка:/g, 'подготовка:<br />')
+                                .replace(/\n/g, '<br />')
+                    );
+                    msgs += msg;
+                }
+                if (document.getElementById('messages').innerHTML != msgs) {
+                    document.body.scrollTop -= 1; // prevents scroll sticking to the bottom on new messages
+                    document.getElementById('messages').innerHTML = msgs.trim();
+                    msg_count += data.length;
+                    if (!scroll_is_animated || scroll_queue >= scroll_queue_limit){
+                        clean_to_limit();
+                        scroll_queue = 0;
+                        document.body.scrollTop = document.body.scrollHeight;
+                    } else {
+                        scroll_queue += 1;
+                        scrollDown(scroll_duration, clean_to_limit);
+                    }
+                    console.log('Time used to render ' + data.length + ' msgs into the template: ' + (new Date().getTime()-ts) + 'ms');
+                }
+
+                if (!is_stopped) {
+                    autoremove_timer = setTimeout(append_new_messages, refresh_period);
+                }
+            }
+
+            function clean_to_limit() {
+                if (msg_count > autoremove_limit) {
+                    var ts = new Date().getTime();
+                    var to_remove = msg_count - autoremove_limit;
+                    var _msgs = document.getElementById('messages').querySelectorAll('.message:nth-child(-n+'+to_remove+')').remove();
+                    msg_count -= to_remove;
+                    console.log('Time used to clean ' + to_remove + ' old messages: ' + (new Date().getTime()-ts) + 'ms');
+                }
+            }
+            
+            String.prototype.escapeHTML = function() {
+                if ('textContent' in Element.prototype) {
+                    // chrome
+                    escape.textContent = this;        
+                } else {
+                    // IE8, old firefox case
+                    escape.innerText = this;
+                }
+                return escape.innerHTML;
+            }
+            
+            // fix for element suicide
+            Element.prototype.remove = function() {
+                this.parentElement.removeChild(this);
+            }
+            NodeList.prototype.remove = HTMLCollection.prototype.remove = function() {
+                for(var i = this.length - 1; i >= 0; i--) {
+                    if(this[i] && this[i].parentElement) {
+                        this[i].parentElement.removeChild(this[i]);
+                    }
+                }
+            }
+
+            function start_stop_btn() {
+                is_stopped = is_stopped ? false : true;
+                if (!is_stopped) {
+                    socket_init(document.getElementById('filter_ip').value);
+                    document.getElementById('start_stop_btn').value = 'Stop';
+                    autoremove_timer = setTimeout(append_new_messages, refresh_period);
+                } else {
+                    clearInterval(autoremove_timer);
+                    sock.close();
+                    document.getElementById('start_stop_btn').value = 'Start';
+                }
+            }
+            
+            function hide_meta_btn() {
+                metainfo_visible = metainfo_visible ? false : true;
+                hide_meta();    
+                scrollDown(scroll_duration);
+            }
+            
+            function hide_meta() {
+                if (metainfo_visible) {
+                    var msgs = document.getElementsByClassName('message-body-meta');
+                    for(var i = 0; i < msgs.length; i++)
+                    {
+                       msgs.item(i).classList.remove('message-body-meta-hidden');
+                    }
+                    document.getElementById('hide_meta_btn').value = 'Hide metainfo';
+                } else {
+                    var msgs = document.getElementsByClassName('message-body-meta');
+                    for(var i = 0; i < msgs.length; i++)
+                    {
+                       msgs.item(i).classList.add('message-body-meta-hidden');
+                    }
+                    document.getElementById('hide_meta_btn').value = 'Show metainfo';
+                };
+            }
+
+            function set_scroll_is_animated() {
+                scroll_is_animated = document.querySelector('#scroll_is_animated').checked;
+            }
+            
+            function clear_btn() {
+                document.getElementById('messages').innerHTML = '';
+                msg_count = 0;
+            }
+            
+            function set_autoremove() {
+                autoremove_limit = document.getElementById('autoremove_limit').value;
+            }
+            
+            function set_highlight(elem) {
+                elem.style.backgroundColor = '#FFFFC0';
+            } 
+            
+            document.getElementById('messages').innerHTML = '';
+            if (ip_filter !== '') {
+                start_stop_btn();
+            }
+        </script>
+    </body>
+</html>
