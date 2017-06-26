@@ -1,6 +1,7 @@
 # About
 
 **pg_grep_client** parses postgres log files using regexp and pushes it's contents to redis channels, using ip as a channel name;
+
 **pg_grep_server** subscribes web-clients to channels.
 
 
@@ -18,5 +19,9 @@ python server.py
 # TODO
 
 async incoming websocket messages while redis channels reading;
+
 move web-server ip:port and redis ip:port to conf file;
-websockets fallback for old-browsers.
+
+websockets fallback for old-browsers;
+
+get rid off javascript global vars.
