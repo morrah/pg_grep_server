@@ -1,9 +1,9 @@
 # About
 
-**[pg_grep_client](https://github.com/morrah/pg_grep_client)** parses postgres log files using regexp and pushes it's contents to redis channels, using ip as a channel name; 
+**[pg_grep_client](https://github.com/morrah/pg_grep_client)** parses postgres log files using regexp and pushes it's contents to redis channels, using ip as a channel name;  
 **[pg_grep_server](https://github.com/morrah/pg_grep_server)** subscribes web-clients to channels.
 
-![screenshot](https://files.catbox.moe/l8ehp6.jpg "screenshot") 
+![screenshot](https://files.catbox.moe/l8ehp6.jpg "screenshot")  
 [demo.mp4 (4.5Mb)](https://files.catbox.moe/wkly9h.mp4)
 
 # Installation
@@ -19,7 +19,7 @@ python server.py
 
 # TODO
 
-async incoming websocket messages while redis channels reading; 
-move web-server ip:port and redis ip:port to conf file; 
-websockets fallback for old-browsers; 
+async incoming websocket messages while redis channels reading;  
+move web-server ip:port and redis ip:port to conf file;  
+websockets fallback for old-browsers;  
 get rid off javascript global vars.
